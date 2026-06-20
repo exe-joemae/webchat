@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>Web VRChat-like</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="ui">
+    <div id="chat-log"></div>
+    <form id="chat-form">
+      <input id="chat-input" type="text" placeholder="メッセージを入力..." autocomplete="off" />
+    </form>
+    <div id="help">
+      WASD / 矢印キー: 移動　マウスドラッグ: 視点回転
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="libs/three.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>

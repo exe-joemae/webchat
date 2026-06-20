@@ -1,0 +1,44 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+  background: #000;
+  color: #fff;
+}
+
+#ui {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  width: 320px;
+  pointer-events: none;
+}
+
+#chat-log {
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+  pointer-events: auto;
+}
+
+#chat-form {
+  display: flex;
+  pointer-events: auto;
+}
+
+#chat-input {
+  flex: 1;
+  padding: 4px 6px;
+  border: none;
+  outline: none;
+  font-size: 12px;
+}
+
+#help {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.8;
+}
