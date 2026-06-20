@@ -3,7 +3,7 @@ const socket = io();
 // ===== Three.js 基本セットアップ =====
 let scene, camera, renderer;
 let myId = null;
-const players = {}; // id -> mesh
+const players = {}; // id -> { info, mesh }
 
 initThree();
 animate();
@@ -85,27 +85,131 @@ window.addEventListener("mousemove", (e) => {
 const myPos = { x: 0, y: 1, z: 0 };
 const speed = 0.1;
 
+// ===== Room UI =====
+const roomForm = document.getElementById("room-form");
+const roomInput = document.getElementById("room-input");
+const roomStatus = document.getElementById("room-status");
+
+let currentRoom = null;
+
+roomForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const roomName = roomInput.value.trim();
+  if (!roomName) return;
+  socket.emit("join-room", roomName);
+});
+
+// ===== Voice Chat =====
+let localStream = null;
+const peers = {}; // peerId -> RTCPeerConnection
+const voiceToggle = document.getElementById("voice-toggle");
+const voiceStatus = document.getElementById("voice-status");
+let micEnabled = false;
+
+voiceToggle.addEventListener("click", async () => {
+  if (!micEnabled) {
+    await startMic();
+  } else {
+    stopMic();
+  }
+});
+
+async function startMic() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micEnabled = true;
+    voiceToggle.textContent = "マイクON";
+    voiceStatus.textContent = "マイク使用中";
+
+    // 既存のピアにトラックを追加
+    Object.values(peers).forEach(pc => {
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    });
+  } catch (err) {
+    console.log("マイクが許可されませんでした", err);
+    voiceStatus.textContent = "マイク許可されず";
+  }
+}
+
+function stopMic() {
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+  micEnabled = false;
+  voiceToggle.textContent = "マイクOFF";
+  voiceStatus.textContent = "マイク未使用";
+}
+
+// WebRTC ピア接続作成
+function createPeerConnection(peerId) {
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+
+  if (localStream) {
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  }
+
+  pc.ontrack = (event) => {
+    const audio = document.createElement("audio");
+    audio.srcObject = event.streams[0];
+    audio.autoplay = true;
+  };
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit("webrtc-ice", { to: peerId, candidate: event.candidate });
+    }
+  };
+
+  return pc;
+}
+
 // ===== Socket.IO イベント =====
-socket.on("init", (data) => {
-  myId = data.id;
-  for (const id in data.players) {
-    const p = data.players[id];
+
+// 部屋初期化
+socket.on("room-init", (data) => {
+  const { me, players: roomPlayers } = data;
+  myId = me.id;
+  currentRoom = me.room;
+  roomStatus.textContent = `Room: ${currentRoom}`;
+
+  // 既存メッシュ削除
+  for (const id in players) {
+    scene.remove(players[id].mesh);
+    delete players[id];
+  }
+
+  // 部屋内プレイヤー再生成
+  roomPlayers.forEach((p) => {
     const mesh = createPlayerMesh(p);
-    players[id] = { info: p, mesh };
-    if (id === myId) {
+    players[p.id] = { info: p, mesh };
+    if (p.id === myId) {
       myPos.x = p.x;
       myPos.y = p.y;
       myPos.z = p.z;
     }
-  }
+  });
 });
 
-socket.on("player-joined", (p) => {
+// 新規参加者
+socket.on("player-joined", async (p) => {
   if (players[p.id]) return;
   const mesh = createPlayerMesh(p);
   players[p.id] = { info: p, mesh };
+
+  // WebRTC 接続開始（自分側から Offer）
+  const pc = createPeerConnection(p.id);
+  peers[p.id] = pc;
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  socket.emit("webrtc-offer", { to: p.id, offer });
 });
 
+// 位置更新
 socket.on("player-moved", (p) => {
   const entry = players[p.id];
   if (!entry) return;
@@ -113,18 +217,20 @@ socket.on("player-moved", (p) => {
   entry.mesh.position.set(p.x, p.y, p.z);
 });
 
+// 退出
 socket.on("player-left", ({ id }) => {
   const entry = players[id];
-  if (!entry) return;
-  scene.remove(entry.mesh);
-  delete players[id];
+  if (entry) {
+    scene.remove(entry.mesh);
+    delete players[id];
+  }
+  if (peers[id]) {
+    peers[id].close();
+    delete peers[id];
+  }
 });
 
-socket.on("chat", (data) => {
-  addChatLine(`${data.from}: ${data.message}`);
-});
-
-// ===== チャットUI =====
+// チャット
 const chatLog = document.getElementById("chat-log");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
@@ -132,9 +238,13 @@ const chatInput = document.getElementById("chat-input");
 chatForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
-  if (!text) return;
+  if (!text || !currentRoom) return;
   socket.emit("chat", text);
   chatInput.value = "";
+});
+
+socket.on("chat", (data) => {
+  addChatLine(`${data.from}: ${data.message}`);
 });
 
 function addChatLine(text) {
@@ -144,11 +254,34 @@ function addChatLine(text) {
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
+// WebRTC シグナリング
+socket.on("webrtc-offer", async ({ from, offer }) => {
+  const pc = createPeerConnection(from);
+  peers[from] = pc;
+
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  socket.emit("webrtc-answer", { to: from, answer });
+});
+
+socket.on("webrtc-answer", async ({ from, answer }) => {
+  const pc = peers[from];
+  if (!pc) return;
+  await pc.setRemoteDescription(new RTCSessionDescription(answer));
+});
+
+socket.on("webrtc-ice", async ({ from, candidate }) => {
+  const pc = peers[from];
+  if (!pc) return;
+  await pc.addIceCandidate(new RTCIceCandidate(candidate));
+});
+
 // ===== メインループ =====
 function animate() {
   requestAnimationFrame(animate);
 
-  // 入力から自キャラ移動
   const forward = (keys["w"] || keys["arrowup"]) ? 1 : (keys["s"] || keys["arrowdown"]) ? -1 : 0;
   const right = (keys["d"] || keys["arrowright"]) ? 1 : (keys["a"] || keys["arrowleft"]) ? -1 : 0;
 
@@ -159,14 +292,15 @@ function animate() {
     myPos.x += dx * speed;
     myPos.z += dz * speed;
 
-    socket.emit("move", { x: myPos.x, y: myPos.y, z: myPos.z });
+    if (currentRoom) {
+      socket.emit("move", { x: myPos.x, y: myPos.y, z: myPos.z });
+    }
 
     if (players[myId]) {
       players[myId].mesh.position.set(myPos.x, myPos.y, myPos.z);
     }
   }
 
-  // カメラを自キャラの後ろに配置
   const camDist = 6;
   const camHeight = 3;
   const cx = myPos.x - Math.sin(yaw) * camDist;
