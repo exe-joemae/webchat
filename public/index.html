@@ -6,6 +6,25 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Room / UI -->
+  <div id="top-ui">
+    <div id="room-panel">
+      <div class="panel-title">Room</div>
+      <form id="room-form">
+        <input id="room-input" type="text" placeholder="部屋名を入力 (例: lobby)" autocomplete="off" />
+        <button type="submit">入室</button>
+      </form>
+      <div id="room-status">未入室</div>
+    </div>
+
+    <div id="voice-panel">
+      <div class="panel-title">Voice</div>
+      <button id="voice-toggle">マイクOFF</button>
+      <div id="voice-status">マイク未使用</div>
+    </div>
+  </div>
+
+  <!-- Chat -->
   <div id="ui">
     <div id="chat-log"></div>
     <form id="chat-form">
